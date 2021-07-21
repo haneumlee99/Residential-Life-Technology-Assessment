@@ -1,0 +1,1607 @@
+---
+title: "HC Assessment R Code"
+author: "Claude Haneum Lee"
+date: "12/17/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(readr)
+library(dplyr)
+library(stringr)
+library(ggplot2)
+library(grid)
+library(gridExtra)
+library(coin)
+```
+
+# Data Export
+
+## Residence Info
+```{r}
+StarRez <- read_csv("Data 12-2-20/StarRez Data.csv", 
+                    col_types = cols(Location = col_factor(levels = c("Shoemaker Hall", 
+                                                                      "Mitchell Hall", 
+                                                                      "Sherburne Hall", 
+                                                                      "Stearns Hall", 
+                                                                      "Case Hall", 
+                                                                      "Hill Hall", 
+                                                                      "Stateview North",
+                                                                      "Stateview South",
+                                                                      "Lawrence Hall")), 
+                                     `Tech ID` = col_character()))
+```
+
+
+## CA Data
+
+### Base Data
+
+```{r}
+CA <- read_csv("Data 12-2-20/HC Survey - CAs.csv", 
+               col_names = FALSE, col_types = cols(X18 = col_character()), 
+               skip = 3)
+CA <- CA %>% 
+  select(-c(1:6, 8:17))
+names(CA) <- c("Finished", "StudentID", "LastName", "FirstName", "Hall1", "Floor", 
+               "Sched", "SchedOther", "SchedNT", "SchedNTOther", 
+               "Comm", "CommOther", "CommNT", "CommNTOther", "Meet", "MeetOther", "MeetNT", "MeetNTOther", 
+               "Feedback", "FeedbackOther", "FeedbackReason", 
+               "SC1", "SC2", "SC3", "SC4", "SC5", "CM1", "CM2", "CM3", "CM4", "CM5", "VC1", "VC2", "VC3", "VC4", "VC5")
+
+#Check Student ID entry error
+for (i in 1:nrow(CA)) {
+  if ((CA$StudentID[i] %in% StarRez$'Tech ID') == FALSE) {print(CA[i,c(2:6)])}
+}
+
+#Remove Unfinished Response
+o <- vector()
+for (k in 1:nrow(CA)) {
+  if (CA$Finished[k] == FALSE) {o <- append(o, k, length(o))}
+}
+CA <- CA[-o, ]
+
+#Check Duplicate Entry
+l <- as.data.frame(table(CA$StudentID))
+for (j in 1:nrow(l)) {
+  if (l[j,2] != 1) {print(l[j,])}
+}
+
+#Fluency Score Convert
+
+for (i in (ncol(CA)-14):ncol(CA)) {
+  a <- vector()
+  for (j in 1:nrow(CA)) {
+    if (is.na(CA[j, i])) {a[j] <- 0}
+    else if (CA[j, i] == "Know how to use this feature") {a[j] <- 1}
+    else if (CA[j, i] == "Use this feature frequently") {a[j] <- 2}
+    else if (CA[j, i] == "Know how to use this feature,Use this feature frequently") {a[j] <- 2}
+  }
+  CA[i] <- a
+}
+
+#Change "Other ..." Entry
+for (i in 1:ncol(CA)) {
+  for (j in 1:nrow(CA)) {
+    if (startsWith(toString(CA[j, i]), "Other") == TRUE) {
+      CA[j, i] <- "Other"
+    }
+  }
+}
+
+
+
+#Join StarRez Data
+CA2 <- inner_join(CA, StarRez, by = c("StudentID" = "Tech ID")) %>% 
+  select(StudentID, Location, Floor, Sched:VC5) %>% 
+  mutate(SCkn = (SC1 %in% c(1,2)) + (SC2 %in% c(1,2)) + (SC3 %in% c(1,2)) + (SC4 %in% c(1,2)) + (SC5 %in% c(1,2)), 
+         SCus = (SC1 == 1) + (SC2 == 1) + (SC3 == 1) + (SC4 == 1) + (SC5 == 1), 
+         CMkn = (CM1 %in% c(1,2)) + (CM2 %in% c(1,2)) + (CM3 %in% c(1,2)) + (CM4 %in% c(1,2)) + (CM5 %in% c(1,2)), 
+         CMus = (CM1 == 1) + (CM2 == 1) + (CM3 == 1) + (CM4 == 1) + (CM5 == 1), 
+         VCkn = (VC1 %in% c(1,2)) + (VC2 %in% c(1,2)) + (VC3 %in% c(1,2)) + (VC4 %in% c(1,2)) + (VC5 %in% c(1,2)), 
+         VCus = (VC1 == 1) + (VC2 == 1) + (VC3 == 1) + (VC4 == 1) + (VC5 == 1))
+```
+
+
+### Clean Response
+
+```{r}
+#Group/Rename Halls
+Hall <- vector()
+for (i in 1:nrow(CA2)) {
+  if (CA2$Location[i]== "Shoemaker Hall") {Hall[i] <- "Shoemaker"}
+  else if (CA2$Location[i]== "Mitchell Hall") {Hall[i] <- "Mitchell"}
+  else if (CA2$Location[i]== "Sherburne Hall") {Hall[i] <- "Sherburne"}
+  else if (CA2$Location[i]== "Stearns Hall") {Hall[i] <- "Stearns"}
+  else if (CA2$Location[i]%in% c("Case Hall", "Hill Hall")) {Hall[i] <- "Case-Hill"}
+  else if (CA2$Location[i]%in% c("Stateview North", "Stateview South")) {Hall[i] <- "Stateview"}
+}
+CA2 <- as.data.frame(cbind(Hall, CA2))
+
+# Sched
+for (i in 1:nrow(CA2)) {
+  if (CA2$Sched[i] == "Hand-written schedule") {CA2$Sched[i] <- "Hand-Written"}
+  else if (startsWith(CA2$Sched[i], "Online")) {CA2$Sched[i] <- "Online App"}
+}
+
+# SchedNT
+for (i in 1:nrow(CA2)) {
+  if (is.na(CA2$SchedNT[i]) == FALSE) {
+    if (startsWith(CA2$SchedNT[i],"Hand-written schedule")) {CA2$SchedNT[i] <- "Easy to keep up"}
+    else if (startsWith(CA2$SchedNT[i],"I am not")) {CA2$SchedNT[i] <- "Not fluent in such technology"}
+    else if (startsWith(CA2$SchedNT[i],"It is")) {CA2$SchedNT[i] <- "Privacy"}
+  }
+}
+
+# Comm
+for (i in 1:nrow(CA2)) {
+  if (startsWith(CA2$Comm[i], "Phone")) {CA2$Comm[i] <- "Phone/PhoneApp"}
+}
+
+# CommNT
+for (i in 1:nrow(CA2)) {
+  if (is.na(CA2$CommNT[i]) == FALSE) {
+    if (startsWith(CA2$CommNT[i],"It is")) {CA2$CommNT[i] <- "Easy to get ahold"}
+    else if (startsWith(CA2$CommNT[i],"I prefer")) {CA2$CommNT[i] <- "In-person Connections"}
+    else if (startsWith(CA2$CommNT[i],"I am")) {CA2$CommNT[i] <- "Not fluent in other methods"}
+  }
+}
+
+# Meet
+for (i in 1:nrow(CA2)) {
+  if (startsWith(CA2$Meet[i], "Video")) {CA2$Meet[i] <- "Online App"}
+  else if (startsWith(CA2$Meet[i], "Phone")) {CA2$Meet[i] <- "Phone/PhoneApp"}
+  else if (startsWith(CA2$Meet[i], "I will")) {CA2$Meet[i] <- "Still in-person"}
+}
+
+# MeetNT
+for (i in 1:nrow(CA2)) {
+  if (is.na(CA2$MeetNT[i]) == FALSE) {
+    if (startsWith(CA2$MeetNT[i],"Possible")) {CA2$MeetNT[i] <- "In-person Connections"}
+    else if (startsWith(CA2$MeetNT[i],"Easier")) {CA2$MeetNT[i] <- "Easy to facilitate"}
+    else if (startsWith(CA2$MeetNT[i],"I am")) {CA2$MeetNT[i] <- "Not fluent in other methods"}
+  }
+}
+```
+
+
+### Multiple Selection Data
+
+```{r}
+# Feedback
+CAFeedback <- vector()
+for (i in 1:nrow(CA2)) {
+  CAFeedback<- append(CAFeedback, unlist(strsplit(CA2$Feedback[i], ",")), length(CAFeedback))
+}
+```
+
+
+
+## Student Data
+
+### Base Data
+
+```{r}
+Student <- read_csv("Data 12-2-20/HC Survey - Students.csv", 
+               col_names = FALSE, col_types = cols(X18 = col_character()), 
+               skip = 5)
+Student <- Student %>% 
+  select(-c(1:6, 8:17))
+names(Student) <- c("Finished", "StudentID", "LastName", "FirstName", "Hall1", "Referral", 
+               "SchedCA", "SchedCAApp", "SchedCAAppOther", "Sched", "SchedOther", "SchedNT", "SchedNTOther", 
+               "CommCA", "CommCAOther", "CommCAApp", "CommCAAppOther", "Comm", "CommOther", "CommNT", "CommNTOther", 
+               "MeetCA", "MeetCAOther", "MeetCAApp", "MeetCAAppOther", "Meet", "MeetOther", "MeetNT", "MeetNTOther", 
+               "Feedback", "FeedbackOther", "FeedbackReason", 
+               "SC1", "SC2", "SC3", "SC4", "SC5", "CM1", "CM2", "CM3", "CM4", "CM5", "VC1", "VC2", "VC3", "VC4", "VC5")
+
+
+#Check Student ID entry error
+for (i in 1:nrow(Student)) {
+  if ((Student$StudentID[i] %in% StarRez$'Tech ID') == FALSE) {print(Student[i,c(2:6)])}
+}
+
+#Check CA entry in Student Survey and remove
+c <- vector()
+for (i in 1:nrow(Student)) {
+  if ((Student$StudentID[i] %in% CA$'StudentID')) {
+    c <- append(c, i, length(c))}
+}
+Student <- Student[-c,]
+
+#Remove Unfinished Response
+o <- vector()
+for (k in 1:nrow(Student)) {
+  if (Student$Finished[k] == FALSE) {o <- append(o, k, length(o))}
+}
+Student <- Student[-o, ]
+
+#Check Duplicate Entry
+l <- as.data.frame(table(Student$StudentID))
+for (j in 1:nrow(l)) {
+  if (l[j,2] != 1) {print(l[j,])}
+}
+
+#Fluency Score Convert
+for (i in (ncol(Student)-14):ncol(Student)) {
+  a <- vector()
+  for (j in 1:nrow(Student)) {
+    if (is.na(Student[j, i])) {a[j] <- 0}
+    else if (Student[j, i] == "Know how to use this feature") {a[j] <- 1}
+    else if (Student[j, i] == "Use this feature frequently") {a[j] <- 2}
+    else if (Student[j, i] == "Know how to use this feature,Use this feature frequently") {a[j] <- 2}
+  }
+  Student[i] <- a
+}
+
+#Change "Other ..." Entry
+for (i in 1:ncol(Student)) {
+  for (j in 1:nrow(Student)) {
+    if (startsWith(toString(Student[j, i]), "Other") == TRUE) {
+      Student[j, i] <- "Other"
+    }
+  }
+}
+
+#Join StarRez Data
+Student2 <- inner_join(Student, StarRez, by = c("StudentID" = "Tech ID")) %>% 
+  select(StudentID, Location, Referral:VC5) %>% 
+  mutate(SCkn = (SC1 %in% c(1,2)) + (SC2 %in% c(1,2)) + (SC3 %in% c(1,2)) + (SC4 %in% c(1,2)) + (SC5 %in% c(1,2)), 
+         SCus = (SC1 == 1) + (SC2 == 1) + (SC3 == 1) + (SC4 == 1) + (SC5 == 1), 
+         CMkn = (CM1 %in% c(1,2)) + (CM2 %in% c(1,2)) + (CM3 %in% c(1,2)) + (CM4 %in% c(1,2)) + (CM5 %in% c(1,2)), 
+         CMus = (CM1 == 1) + (CM2 == 1) + (CM3 == 1) + (CM4 == 1) + (CM5 == 1), 
+         VCkn = (VC1 %in% c(1,2)) + (VC2 %in% c(1,2)) + (VC3 %in% c(1,2)) + (VC4 %in% c(1,2)) + (VC5 %in% c(1,2)), 
+         VCus = (VC1 == 1) + (VC2 == 1) + (VC3 == 1) + (VC4 == 1) + (VC5 == 1))
+```
+
+
+### Clean Response
+
+```{r}
+#Group/Rename Halls
+Hall <- vector()
+for (i in 1:nrow(Student2)) {
+  if (Student2$Location[i]== "Shoemaker Hall") {Hall[i] <- "Shoemaker"}
+  else if (Student2$Location[i]== "Mitchell Hall") {Hall[i] <- "Mitchell"}
+  else if (Student2$Location[i]== "Sherburne Hall") {Hall[i] <- "Sherburne"}
+  else if (Student2$Location[i]== "Stearns Hall") {Hall[i] <- "Stearns"}
+  else if (Student2$Location[i]%in% c("Case Hall", "Hill Hall")) {Hall[i] <- "Case-Hill"}
+  else if (Student2$Location[i]%in% c("Stateview North", "Stateview South")) {Hall[i] <- "Stateview"}
+}
+Student2 <- as.data.frame(cbind(Hall, Student2))
+
+# Sched
+for (i in 1:nrow(Student2)) {
+  if (Student2$Sched[i] == "Hand-written schedule") {Student2$Sched[i] <- "Hand-Written"}
+  else if (startsWith(Student2$Sched[i], "Online")) {Student2$Sched[i] <- "Online App"}
+}
+
+# SchedNT
+for (i in 1:nrow(Student2)) {
+  if (is.na(Student2$SchedNT[i]) == FALSE) {
+    if (startsWith(Student2$SchedNT[i],"Hand-written schedule")) {Student2$SchedNT[i] <- "Easy to keep up"}
+    else if (startsWith(Student2$SchedNT[i],"I am not")) {Student2$SchedNT[i] <- "Not fluent in such technology"}
+    else if (startsWith(Student2$SchedNT[i],"It is")) {Student2$SchedNT[i] <- "Privacy"}
+  }
+}
+
+# Comm
+for (i in 1:nrow(Student2)) {
+  if (startsWith(Student2$Comm[i], "Phone")) {Student2$Comm[i] <- "Phone/PhoneApp"}
+}
+
+# CommNT
+for (i in 1:nrow(Student2)) {
+  if (is.na(Student2$CommNT[i]) == FALSE) {
+    if (startsWith(Student2$CommNT[i],"It is")) {Student2$CommNT[i] <- "Easy to get ahold"}
+    else if (startsWith(Student2$CommNT[i],"I prefer")) {Student2$CommNT[i] <- "In-person Connections"}
+    else if (startsWith(Student2$CommNT[i],"I am")) {Student2$CommNT[i] <- "Not fluent in other methods"}
+  }
+}
+
+# MeetCA
+for (i in 1:nrow(Student2)) {
+  if (startsWith(Student2$MeetCA[i], "Video")) {Student2$MeetCA[i] <- "Online App"}
+  else if (startsWith(Student2$MeetCA[i], "Phone")) {Student2$MeetCA[i] <- "Phone/PhoneApp"}
+  else if (startsWith(Student2$MeetCA[i], "In-")) {Student2$MeetCA[i] <- "In-Person"}
+}
+
+# Meet
+for (i in 1:nrow(Student2)) {
+  if (startsWith(Student2$Meet[i], "Video")) {Student2$Meet[i] <- "Online App"}
+  else if (startsWith(Student2$Meet[i], "Phone")) {Student2$Meet[i] <- "Phone/PhoneApp"}
+  else if (startsWith(Student2$Meet[i], "I will")) {Student2$Meet[i] <- "Still in-person"}
+}
+
+# MeetNT
+for (i in 1:nrow(Student2)) {
+  if (is.na(Student2$MeetNT[i]) == FALSE) {
+    if (startsWith(Student2$MeetNT[i],"Possible")) {Student2$MeetNT[i] <- "In-person Connections"}
+    else if (startsWith(Student2$MeetNT[i],"Easier")) {Student2$MeetNT[i] <- "Easy to be part of"}
+    else if (startsWith(Student2$MeetNT[i],"I am")) {Student2$MeetNT[i] <- "Not fluent in other methods"}
+  }
+}
+```
+
+
+### Multiple Selection Data
+
+```{r}
+# SchedCAApp
+StudentSchedCAApp <- vector()
+for (i in 1:nrow(Student2)) {
+  if (is.na(Student2$SchedCAApp[i]) == FALSE) {
+    StudentSchedCAApp <- append(StudentSchedCAApp, unlist(strsplit(Student2$SchedCAApp[i], ",")), length(StudentSchedCAApp))
+  }
+}
+for (i in 1:length(StudentSchedCAApp)) {
+  if (startsWith(StudentSchedCAApp[i], "Other") == TRUE) {StudentSchedCAApp[i] <- "Other"}
+  else if (startsWith(StudentSchedCAApp[i], "Outlook") == TRUE) {StudentSchedCAApp[i] <- "Outlook"}
+}
+
+# CommCAApp
+StudentCommCAApp <- vector()
+for (i in 1:nrow(Student2)) {
+  if (is.na(Student2$CommCAApp[i]) == FALSE) {
+    StudentCommCAApp <- append(StudentCommCAApp, unlist(strsplit(Student2$CommCAApp[i], ",")), length(StudentCommCAApp))
+  }
+}
+for (i in 1:length(StudentCommCAApp)) {
+  if (startsWith(StudentCommCAApp[i], "Other") == TRUE) {StudentCommCAApp[i] <- "Other"}
+  else if (startsWith(StudentCommCAApp[i], "Phone") == TRUE) {StudentCommCAApp[i] <- "Phone"}
+  else if (startsWith(StudentCommCAApp[i], "Outlook") == TRUE) {StudentCommCAApp[i] <- "Outlook"}
+}
+
+# MeetCAApp
+StudentMeetCAApp <- vector()
+for (i in 1:nrow(Student2)) {
+  if (is.na(Student2$MeetCAApp[i]) == FALSE) {
+    StudentMeetCAApp <- append(StudentMeetCAApp, unlist(strsplit(Student2$MeetCAApp[i], ",")), length(StudentMeetCAApp))
+  }
+}
+for (i in 1:length(StudentMeetCAApp)) {
+  if (startsWith(StudentMeetCAApp[i], "Other") == TRUE) {StudentMeetCAApp[i] <- "Other"}
+  else if (startsWith(StudentMeetCAApp[i], "Phone") == TRUE) {StudentMeetCAApp[i] <- "Phone"}
+  else if (startsWith(StudentMeetCAApp[i], "Outlook") == TRUE) {StudentMeetCAApp[i] <- "Outlook"}
+}
+
+# Feedback
+StudentFeedback <- vector()
+for (i in 1:nrow(Student2)) {
+  StudentFeedback<- append(StudentFeedback, unlist(strsplit(Student2$Feedback[i], ",")), length(StudentFeedback))
+}
+```
+
+
+### Student Data Student ID List
+
+```{r eval=FALSE, include=FALSE}
+cat(Student2$StudentID, sep = "\n")
+```
+
+
+### Join Demographic Data
+
+```{r}
+library(readxl)
+library(eeptools)
+Dem <- read_excel("Data 12-2-20/HC Demographic Data.xlsx", 
+                  col_types = c("text", "text", "date", "text", "text", "text"))
+Dem$Class <- factor(Dem$Class,levels = c("FR", "SO", "JR", "SR"))
+Dem <- mutate(Dem, Age = floor(age_calc(as.Date(Dem$DOB), unit = "years")))
+Student2 <- inner_join(Student2, Dem, by = c("StudentID" = "StudentID"))
+```
+
+
+
+
+
+
+# Use of Technology 
+
+## Completion by Hall
+
+```{r}
+library(tidyverse)
+# CA
+p <- ggplot(CA2, aes(x = Location)) +
+  geom_bar() +
+  theme(axis.text.x = element_text(angle = 15), 
+        axis.title.x = element_blank())
+k <- tableGrob(unname(as.data.frame(table(CA2$Location))), rows = NULL)  
+grid.arrange(p, k, ncol=2, widths = c(3, 1), top = textGrob("CA Completion Count", gp = gpar(fontsize = 30)))
+
+# Student
+m <- as.data.frame(cbind(round(table(Student2$Location)/table(StarRez$Location) * 100, 2), table(Student2$Location), round(table(StarRez$Location)*0.2)))
+names(m) <- c("Prop", "Count", "Goal")
+m <- m %>% 
+  arrange(desc(Prop))
+k <- tableGrob(m)  
+grid.arrange(k, top = textGrob("Student Completion", gp = gpar(fontsize = 30)))
+```
+
+
+## Scheduling 
+
+### Scheduling Method Preference
+
+```{r}
+# a. CA Preference
+ggplot(CA2, aes(x = Sched)) +
+  geom_bar() +
+  geom_text(stat='count', aes(label=..count..), vjust=1, size = 8, color = "blue") +
+  labs(title = "CA Scheduling Preference") +
+  theme(plot.title = element_text(hjust = 0.5, size = 20), 
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(size = 15),
+        axis.text.y = element_text(size = 12))
+
+# b. Student Experience from CA
+ggplot(Student2, aes(x = SchedCA)) +
+  geom_bar() +
+  geom_text(stat='count', aes(label=..count..), vjust=1, size = 8, color = "blue") +
+  labs(title = "Has your CA use any online app to schedule an event with you?") +
+  theme(plot.title = element_text(hjust = 0.5, size = 17), 
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(size = 15),
+        axis.text.y = element_text(size = 12))
+
+# c. Student Preference
+ggplot(Student2, aes(x = Sched)) +
+  geom_bar() +
+  geom_text(stat='count', aes(label=..count..), vjust=1, size = 8, color = "blue") +
+  labs(title = "Student Scheduling Preference") +
+  theme(plot.title = element_text(hjust = 0.5, size = 20), 
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(size = 15),
+        axis.text.y = element_text(size = 12))
+```
+
+
+### Online Scheduling App
+
+```{r}
+ggplot(as.data.frame(StudentSchedCAApp), aes(x = StudentSchedCAApp)) +
+  geom_bar() +
+  geom_text(stat='count', aes(label=..count..), vjust=1, size = 8, color = "blue") +
+  labs(title = "What online app did your CA use to schedule an event with you?") +
+  theme(plot.title = element_text(hjust = 0.5, size = 17), 
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(size = 15),
+        axis.text.y = element_text(size = 12))
+```
+
+
+### Hand-Written Scheduling Reason
+
+```{r}
+# a. CA Reason
+ggplot(drop_na(CA2, SchedNT), aes(x = SchedNT)) +
+  geom_bar() +
+  geom_text(stat='count', aes(label=..count..), vjust=1, size = 8, color = "blue") +
+  labs(title = "CA Why Hand-Written Schedule?") +
+  theme(plot.title = element_text(hjust = 0.5, size = 20), 
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(size = 14),
+        axis.text.y = element_text(size = 12))
+
+# b. Student Reason
+ggplot(drop_na(Student2, SchedNT), aes(x = SchedNT)) +
+  geom_bar() +
+  geom_text(stat='count', aes(label=..count..), vjust=1, size = 8, color = "blue") +
+  labs(title = "Student Why Hand-Written Schedule?") +
+  theme(plot.title = element_text(hjust = 0.5, size = 20), 
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(size = 14),
+        axis.text.y = element_text(size = 12))
+```
+
+
+## Communication
+
+### Communication Method Preference
+
+```{r}
+# a. CA Preference
+ggplot(CA2, aes(x = Comm)) +
+  geom_bar() +
+  geom_text(stat='count', aes(label=..count..), vjust=1, size = 8, color = "blue") +
+  labs(title = "CA Communication Preference") +
+  theme(plot.title = element_text(hjust = 0.5, size = 20), 
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(size = 15),
+        axis.text.y = element_text(size = 12))
+
+# b. Student Experience from CA
+ggplot(Student2, aes(x = CommCA)) +
+  geom_bar() +
+  geom_text(stat='count', aes(label=..count..), vjust=1, size = 8, color = "blue") +
+  labs(title = "What method does your CA primarily use to contact you?") +
+  theme(plot.title = element_text(hjust = 0.5, size = 17), 
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(size = 15),
+        axis.text.y = element_text(size = 12))
+
+# c. Student Preference
+ggplot(Student2, aes(x = Comm)) +
+  geom_bar() +
+  geom_text(stat='count', aes(label=..count..), vjust=1, size = 8, color = "blue") +
+  labs(title = "Student Communication Preference") +
+  theme(plot.title = element_text(hjust = 0.5, size = 20), 
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(size = 15),
+        axis.text.y = element_text(size = 12))
+```
+
+
+### Online Communication App
+
+```{r}
+ggplot(as.data.frame(StudentCommCAApp), aes(x = StudentCommCAApp)) +
+  geom_bar() +
+  geom_text(stat='count', aes(label=..count..), vjust=1, size = 8, color = "blue") +
+  labs(title = "What online app did your CA use to communicate with you?") +
+  theme(plot.title = element_text(hjust = 0.5, size = 17),
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(size = 15),
+        axis.text.y = element_text(size = 12))
+```
+
+
+### In-Person Communication Reason
+
+```{r}
+# a. CA Reason
+ggplot(drop_na(CA2, CommNT), aes(x = CommNT)) +
+  geom_bar() +
+  geom_text(stat='count', aes(label=..count..), vjust=1, size = 8, color = "blue") +
+  labs(title = "CA Why in-person communication?") +
+  theme(plot.title = element_text(hjust = 0.5, size = 20), 
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(size = 15),
+        axis.text.y = element_text(size = 12))
+
+# b. Student Reason
+ggplot(drop_na(Student2, CommNT), aes(x = CommNT)) +
+  geom_bar() +
+  geom_text(stat='count', aes(label=..count..), vjust=1, size = 8, color = "blue") +
+  labs(title = "Student Why in-person communication?") +
+  theme(plot.title = element_text(hjust = 0.5, size = 20), 
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(size = 15),
+        axis.text.y = element_text(size = 12))
+```
+
+
+## Meeting
+
+### Meeting Method Preference
+
+```{r}
+# a. CA Preference
+ggplot(CA2, aes(x = Meet)) +
+  geom_bar() +
+  geom_text(stat='count', aes(label=..count..), vjust=1, size = 8, color = "blue") +
+  labs(title = "CA Meeting Preference") +
+  theme(plot.title = element_text(hjust = 0.5, size = 20), 
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(size = 15),
+        axis.text.y = element_text(size = 12))
+
+# b. Student Experience from CA
+ggplot(Student2, aes(x = MeetCA)) +
+  geom_bar() +
+  geom_text(stat='count', aes(label=..count..), vjust=1, size = 8, color = "blue") +
+  labs(title = "Which method did your CA used in meeting with you?") +
+  theme(plot.title = element_text(hjust = 0.5, size = 18), 
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(size = 15),
+        axis.text.y = element_text(size = 12))
+
+# c. Student Preference
+ggplot(Student2, aes(x = Meet)) +
+  geom_bar() +
+  geom_text(stat='count', aes(label=..count..), vjust=1, size = 8, color = "blue") +
+  labs(title = "Student Meeting Preference") +
+  theme(plot.title = element_text(hjust = 0.5, size = 20), 
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(size = 15),
+        axis.text.y = element_text(size = 12))
+```
+
+
+### Online Meeting App
+
+```{r}
+ggplot(as.data.frame(StudentMeetCAApp), aes(x = StudentMeetCAApp)) +
+  geom_bar() +
+  geom_text(stat='count', aes(label=..count..), vjust=1, size = 8, color = "blue") +
+  labs(title = "What online app did your CA use to facilitate meetings with you?") +
+  theme(plot.title = element_text(hjust = 0.5, size = 17),
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(size = 14),
+        axis.text.y = element_text(size = 12))
+```
+
+
+### In-Person Reason
+
+```{r}
+# a. CA Reason
+ggplot(drop_na(CA2, MeetNT), aes(x = MeetNT)) +
+  geom_bar() +
+  geom_text(stat='count', aes(label=..count..), vjust=1, size = 8, color = "blue") +
+  labs(title = "CA Why in-person meeting?") +
+  theme(plot.title = element_text(hjust = 0.5, size = 20), 
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(size = 15),
+        axis.text.y = element_text(size = 12))
+
+# b. Student Reason
+ggplot(drop_na(Student2, MeetNT), aes(x = MeetNT)) +
+  geom_bar() +
+  geom_text(stat='count', aes(label=..count..), vjust=1, size = 8, color = "blue") +
+  labs(title = "Student Why in-person meeting?") +
+  theme(plot.title = element_text(hjust = 0.5, size = 20), 
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(size = 15),
+        axis.text.y = element_text(size = 12))
+```
+
+
+## Technology Area Feedback
+
+```{r}
+# a. CA Feedback
+ggplot(as.data.frame(CAFeedback), aes(x = CAFeedback)) +
+  geom_bar() +
+  geom_text(stat='count', aes(label=..count..), vjust=1, size = 8, color = "blue") +
+  labs(title = "CA Which areas in Res Life need more use of technology?") +
+  theme(plot.title = element_text(hjust = 0.5, size = 17), 
+        axis.title.x = element_blank(), 
+        axis.text.x = element_text(angle = 15, size = 15),
+        axis.text.y = element_text(size = 12))
+
+# b. Student Reason
+ggplot(as.data.frame(StudentFeedback), aes(x = StudentFeedback)) +
+  geom_bar() +
+  geom_text(stat='count', aes(label=..count..), vjust=1, size = 8, color = "blue") +
+  labs(title = "Student CA Which areas in Res Life need more use of technology?") +
+  theme(plot.title = element_text(hjust = 0.5, size = 17), 
+        axis.title.x = element_blank(), 
+        axis.text.x = element_text(angle = 15, size = 15),
+        axis.text.y = element_text(size = 12))
+```
+
+# Technology Fluency & Usage
+
+## Fluency vs Usage
+
+```{r}
+#Scheduling
+t.test(Student2$SCkn, Student2$SCus, paired = TRUE, alternative = "greater")
+
+#Communication
+t.test(Student2$CMkn, Student2$CMus, paired = TRUE, alternative = "greater")
+
+#Meeting
+t.test(Student2$VCkn, Student2$VCus, paired = TRUE, alternative = "greater")
+```
+
+
+## Three Scores
+
+### Fluency
+
+```{r}
+mean(Student2$SCkn)
+mean(Student2$CMkn)
+mean(Student2$VCkn)
+
+#Scheduling vs Communication
+t.test(Student2$SCkn, Student2$CMkn, paired = TRUE)
+
+#Scheduling vs Meeting
+t.test(Student2$SCkn, Student2$VCkn, paired = TRUE)
+
+#Communication vs Meeting
+t.test(Student2$CMkn, Student2$VCkn, paired = TRUE)
+```
+
+### Usage
+
+```{r}
+mean(Student2$SCus)
+mean(Student2$CMus)
+mean(Student2$VCus)
+
+#Scheduling vs Communication
+t.test(Student2$SCus, Student2$CMus, paired = TRUE)
+
+#Scheduling vs Meeting
+t.test(Student2$SCus, Student2$VCus, paired = TRUE)
+
+#Communication vs Meeting
+t.test(Student2$CMus, Student2$VCus, paired = TRUE)
+```
+
+
+## CA vs Students
+
+### Fluency
+
+```{r}
+#Scheduling
+SCkn <- data.frame(score <- c(CA2$SCkn, Student2$SCkn),
+                   group <- c(rep("CA", nrow(CA2)), rep("Student", nrow(Student2))))
+ggplot(SCkn, aes(x = group, y = score, color = group)) +
+  geom_point(position = "jitter", show.legend = FALSE) +
+  geom_hline(yintercept = mean(CA2$SCkn), color = "pink") +
+  geom_hline(yintercept = mean(Student2$SCkn), color = "skyblue") +
+  labs(title = "Scheduling Technology Fluency") +
+  theme(plot.title = element_text(hjust = 0.5, size = 20), 
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(size = 15),
+        axis.text.y = element_text(size = 12))
+
+t.test(score ~ group, data = SCkn, alternative = "greater")
+mean(CA2$SCkn) - mean(Student2$SCkn)
+
+#Communication
+CMkn <- data.frame(score <- c(CA2$CMkn, Student2$CMkn),
+                   group <- c(rep("CA", nrow(CA2)), rep("Student", nrow(Student2))))
+ggplot(CMkn, aes(x = group, y = score, color = group)) +
+  geom_point(position = "jitter", show.legend = FALSE) +
+  geom_hline(yintercept = mean(CA2$CMkn), color = "pink") +
+  geom_hline(yintercept = mean(Student2$CMkn), color = "skyblue") +
+  labs(title = "Communication Technology Fluency") +
+  theme(plot.title = element_text(hjust = 0.5, size = 20), 
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(size = 15),
+        axis.text.y = element_text(size = 12))
+
+t.test(score ~ group, data = CMkn, alternative = "greater")
+mean(CA2$CMkn) - mean(Student2$CMkn)
+
+#Meeting
+VCkn <- data.frame(score <- c(CA2$VCkn, Student2$VCkn),
+                   group <- c(rep("CA", nrow(CA2)), rep("Student", nrow(Student2))))
+ggplot(VCkn, aes(x = group, y = score, color = group)) +
+  geom_point(position = "jitter", show.legend = FALSE) +
+  geom_hline(yintercept = mean(CA2$VCkn), color = "pink") +
+  geom_hline(yintercept = mean(Student2$VCkn), color = "skyblue") +
+  labs(title = "Meeting Technology Fluency") +
+  theme(plot.title = element_text(hjust = 0.5, size = 20), 
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(size = 15),
+        axis.text.y = element_text(size = 12))
+
+t.test(score ~ group, data = VCkn, alternative = "greater")
+mean(CA2$VCkn) - mean(Student2$VCkn)
+```
+
+
+### Usage
+
+```{r}
+#Scheduling
+SCus <- data.frame(score <- c(CA2$SCus, Student2$SCus),
+                   group <- c(rep("CA", nrow(CA2)), rep("Student", nrow(Student2))))
+ggplot(SCus, aes(x = group, y = score, color = group)) +
+  geom_point(position = "jitter", show.legend = FALSE) +
+  geom_hline(yintercept = mean(CA2$SCus), color = "#F8766D") +
+  geom_hline(yintercept = mean(Student2$SCus), color = "#00BFC4") +
+  labs(title = "Scheduling Technology Usage") +
+  theme(plot.title = element_text(hjust = 0.5, size = 20), 
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(size = 15),
+        axis.text.y = element_text(size = 12))
+
+t.test(score ~ group, data = SCus, alternative = "less")
+mean(CA2$SCus) - mean(Student2$SCus)
+
+#Communication
+CMus <- data.frame(score <- c(CA2$CMus, Student2$CMus),
+                   group <- c(rep("CA", nrow(CA2)), rep("Student", nrow(Student2))))
+ggplot(CMus, aes(x = group, y = score, color = group)) +
+  geom_point(position = "jitter", show.legend = FALSE) +
+  geom_hline(yintercept = mean(CA2$CMus), color = "#F8766D") +
+  geom_hline(yintercept = mean(Student2$CMus), color = "#00BFC4") +
+  labs(title = "Communication Technology Usage") +
+  theme(plot.title = element_text(hjust = 0.5, size = 20), 
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(size = 15),
+        axis.text.y = element_text(size = 12))
+
+t.test(score ~ group, data = CMus, alternative = "greater")
+mean(CA2$CMus) - mean(Student2$CMus)
+
+#Meeting
+VCus <- data.frame(score <- c(CA2$VCus, Student2$VCus),
+                   group <- c(rep("CA", nrow(CA2)), rep("Student", nrow(Student2))))
+ggplot(VCus, aes(x = group, y = score, color = group)) +
+  geom_point(position = "jitter", show.legend = FALSE) +
+  geom_hline(yintercept = mean(CA2$VCus), color = "#F8766D") +
+  geom_hline(yintercept = mean(Student2$VCus), color = "#00BFC4") +
+  labs(title = "Meeting Technology Usage") +
+  theme(plot.title = element_text(hjust = 0.5, size = 20), 
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(size = 15),
+        axis.text.y = element_text(size = 12))
+
+t.test(score ~ group, data = VCus, alternative = "less")
+mean(CA2$VCus) - mean(Student2$VCus)
+```
+
+
+## Hall/Community
+
+### Fluency
+```{r}
+#Scheduling
+SCkn <- data.frame(score = Student2$SCkn,
+                   group = as.factor(Student2$Hall))
+ggplot(SCkn, aes(x = group, y = score, color = group)) +
+  geom_point(position = "jitter", show.legend = FALSE) +
+  geom_hline(yintercept = mean(filter(Student2, Hall == "Shoemaker")$SCkn), color = "#F8766D") +
+  geom_hline(yintercept = mean(filter(Student2, Hall == "Mitchell")$SCkn), color = "#B79F00") +
+  geom_hline(yintercept = mean(filter(Student2, Hall == "Sherburne")$SCkn), color = "#00BA38") +
+  geom_hline(yintercept = mean(filter(Student2, Hall == "Stearns")$SCkn), color = "#00BFC4") +
+  geom_hline(yintercept = mean(filter(Student2, Hall == "Case-Hill")$SCkn), color = "#619CFF") +
+  geom_hline(yintercept = mean(filter(Student2, Hall == "Stateview")$SCkn), color = "#F564E3") +
+  labs(title = "Scheduling Technology Fluency") +
+  theme(plot.title = element_text(hjust = 0.5, size = 20), 
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(size = 15),
+        axis.text.y = element_text(size = 12))
+
+meanSCkn <- data.frame(Mean = c(mean(filter(Student2, Hall == "Shoemaker")$SCkn),
+                                 mean(filter(Student2, Hall == "Mitchell")$SCkn),
+                                 mean(filter(Student2, Hall == "Sherburne")$SCkn),
+                                 mean(filter(Student2, Hall == "Stearns")$SCkn),
+                                 mean(filter(Student2, Hall == "Case-Hill")$SCkn),
+                                 mean(filter(Student2, Hall == "Stateview")$SCkn)),
+                       Hall = c("Shoemaker", "Mitchell", "Sherburne", "Stearns", "Case-Hill", "Stateview")) %>% 
+  arrange(Mean)
+meanSCkn
+kruskal_test(score ~ group, data = SCkn, distribution = approximate())
+
+
+#Communication
+CMkn <- data.frame(score <- Student2$CMkn,
+                   group <- as.factor(Student2$Hall))
+ggplot(CMkn, aes(x = group, y = score, color = group)) +
+  geom_point(position = "jitter", show.legend = FALSE) +
+  geom_hline(yintercept = mean(filter(Student2, Hall == "Shoemaker")$CMkn), color = "#F8766D") +
+  geom_hline(yintercept = mean(filter(Student2, Hall == "Mitchell")$CMkn), color = "#B79F00") +
+  geom_hline(yintercept = mean(filter(Student2, Hall == "Sherburne")$CMkn), color = "#00BA38") +
+  geom_hline(yintercept = mean(filter(Student2, Hall == "Stearns")$CMkn), color = "#00BFC4") +
+  geom_hline(yintercept = mean(filter(Student2, Hall == "Case-Hill")$CMkn), color = "#619CFF") +
+  geom_hline(yintercept = mean(filter(Student2, Hall == "Stateview")$CMkn), color = "#F564E3") +
+  labs(title = "Communication Technology Fluency") +
+  theme(plot.title = element_text(hjust = 0.5, size = 20), 
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(size = 15),
+        axis.text.y = element_text(size = 12))
+
+meanCMkn <- data.frame(Mean = c(mean(filter(Student2, Hall == "Shoemaker")$CMkn),
+                                 mean(filter(Student2, Hall == "Mitchell")$CMkn),
+                                 mean(filter(Student2, Hall == "Sherburne")$CMkn),
+                                 mean(filter(Student2, Hall == "Stearns")$CMkn),
+                                 mean(filter(Student2, Hall == "Case-Hill")$CMkn),
+                                 mean(filter(Student2, Hall == "Stateview")$CMkn)),
+                       Hall = c("Shoemaker", "Mitchell", "Sherburne", "Stearns", "Case-Hill", "Stateview")) %>% 
+  arrange(Mean)
+meanCMkn
+kruskal_test(score ~ group, data = CMkn, distribution = approximate())
+
+#Meeting
+VCkn <- data.frame(score <- Student2$VCkn,
+                   group <- as.factor(Student2$Hall))
+ggplot(VCkn, aes(x = group, y = score, color = group)) +
+  geom_point(position = "jitter", show.legend = FALSE) +
+  geom_hline(yintercept = mean(filter(Student2, Hall == "Shoemaker")$VCkn), color = "#F8766D") +
+  geom_hline(yintercept = mean(filter(Student2, Hall == "Mitchell")$VCkn), color = "#B79F00") +
+  geom_hline(yintercept = mean(filter(Student2, Hall == "Sherburne")$VCkn), color = "#00BA38") +
+  geom_hline(yintercept = mean(filter(Student2, Hall == "Stearns")$VCkn), color = "#00BFC4") +
+  geom_hline(yintercept = mean(filter(Student2, Hall == "Case-Hill")$VCkn), color = "#619CFF") +
+  geom_hline(yintercept = mean(filter(Student2, Hall == "Stateview")$VCkn), color = "#F564E3") +
+  labs(title = "Meeting Technology Fluency") +
+  theme(plot.title = element_text(hjust = 0.5, size = 20), 
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(size = 15),
+        axis.text.y = element_text(size = 12))
+
+meanVCkn <- data.frame(Mean = c(mean(filter(Student2, Hall == "Shoemaker")$VCkn),
+                                 mean(filter(Student2, Hall == "Mitchell")$VCkn),
+                                 mean(filter(Student2, Hall == "Sherburne")$VCkn),
+                                 mean(filter(Student2, Hall == "Stearns")$VCkn),
+                                 mean(filter(Student2, Hall == "Case-Hill")$VCkn),
+                                 mean(filter(Student2, Hall == "Stateview")$VCkn)),
+                       Hall = c("Shoemaker", "Mitchell", "Sherburne", "Stearns", "Case-Hill", "Stateview")) %>% 
+  arrange(Mean)
+meanVCkn
+kruskal_test(score ~ group, data = VCkn, distribution = approximate())
+```
+
+### Usage
+```{r}
+#Scheduling
+SCus <- data.frame(score = Student2$SCus,
+                   group = as.factor(Student2$Hall))
+ggplot(SCus, aes(x = group, y = score, color = group)) +
+  geom_point(position = "jitter", show.legend = FALSE) +
+  geom_hline(yintercept = mean(filter(Student2, Hall == "Shoemaker")$SCus), color = "#F8766D") +
+  geom_hline(yintercept = mean(filter(Student2, Hall == "Mitchell")$SCus), color = "#B79F00") +
+  geom_hline(yintercept = mean(filter(Student2, Hall == "Sherburne")$SCus), color = "#00BA38") +
+  geom_hline(yintercept = mean(filter(Student2, Hall == "Stearns")$SCus), color = "#00BFC4") +
+  geom_hline(yintercept = mean(filter(Student2, Hall == "Case-Hill")$SCus), color = "#619CFF") +
+  geom_hline(yintercept = mean(filter(Student2, Hall == "Stateview")$SCus), color = "#F564E3") +
+  labs(title = "Scheduling Technology Usage") +
+  theme(plot.title = element_text(hjust = 0.5, size = 20), 
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(size = 15),
+        axis.text.y = element_text(size = 12))
+
+meanSCus <- data.frame(Mean = c(mean(filter(Student2, Hall == "Shoemaker")$SCus),
+                                 mean(filter(Student2, Hall == "Mitchell")$SCus),
+                                 mean(filter(Student2, Hall == "Sherburne")$SCus),
+                                 mean(filter(Student2, Hall == "Stearns")$SCus),
+                                 mean(filter(Student2, Hall == "Case-Hill")$SCus),
+                                 mean(filter(Student2, Hall == "Stateview")$SCus)),
+                       Hall = c("Shoemaker", "Mitchell", "Sherburne", "Stearns", "Case-Hill", "Stateview")) %>% 
+  arrange(Mean)
+meanSCus
+kruskal_test(score ~ group, data = SCus, distribution = approximate())
+
+
+#Communication
+CMus <- data.frame(score <- Student2$CMus,
+                   group <- as.factor(Student2$Hall))
+ggplot(CMus, aes(x = group, y = score, color = group)) +
+  geom_point(position = "jitter", show.legend = FALSE) +
+  geom_hline(yintercept = mean(filter(Student2, Hall == "Shoemaker")$CMus), color = "#F8766D") +
+  geom_hline(yintercept = mean(filter(Student2, Hall == "Mitchell")$CMus), color = "#B79F00") +
+  geom_hline(yintercept = mean(filter(Student2, Hall == "Sherburne")$CMus), color = "#00BA38") +
+  geom_hline(yintercept = mean(filter(Student2, Hall == "Stearns")$CMus), color = "#00BFC4") +
+  geom_hline(yintercept = mean(filter(Student2, Hall == "Case-Hill")$CMus), color = "#619CFF") +
+  geom_hline(yintercept = mean(filter(Student2, Hall == "Stateview")$CMus), color = "#F564E3") +
+  labs(title = "Communication Technology Usage") +
+  theme(plot.title = element_text(hjust = 0.5, size = 20), 
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(size = 15),
+        axis.text.y = element_text(size = 12))
+
+meanCMus <- data.frame(Mean = c(mean(filter(Student2, Hall == "Shoemaker")$CMus),
+                                 mean(filter(Student2, Hall == "Mitchell")$CMus),
+                                 mean(filter(Student2, Hall == "Sherburne")$CMus),
+                                 mean(filter(Student2, Hall == "Stearns")$CMus),
+                                 mean(filter(Student2, Hall == "Case-Hill")$CMus),
+                                 mean(filter(Student2, Hall == "Stateview")$CMus)),
+                       Hall = c("Shoemaker", "Mitchell", "Sherburne", "Stearns", "Case-Hill", "Stateview")) %>% 
+  arrange(Mean)
+meanCMus
+kruskal_test(score ~ group, data = CMus, distribution = approximate())
+
+#Meeting
+VCus <- data.frame(score <- Student2$VCus,
+                   group <- as.factor(Student2$Hall))
+ggplot(VCus, aes(x = group, y = score, color = group)) +
+  geom_point(position = "jitter", show.legend = FALSE) +
+  geom_hline(yintercept = mean(filter(Student2, Hall == "Shoemaker")$VCus), color = "#F8766D") +
+  geom_hline(yintercept = mean(filter(Student2, Hall == "Mitchell")$VCus), color = "#B79F00") +
+  geom_hline(yintercept = mean(filter(Student2, Hall == "Sherburne")$VCus), color = "#00BA38") +
+  geom_hline(yintercept = mean(filter(Student2, Hall == "Stearns")$VCus), color = "#00BFC4") +
+  geom_hline(yintercept = mean(filter(Student2, Hall == "Case-Hill")$VCus), color = "#619CFF") +
+  geom_hline(yintercept = mean(filter(Student2, Hall == "Stateview")$VCus), color = "#F564E3") +
+  labs(title = "Meeting Technology Usage") +
+  theme(plot.title = element_text(hjust = 0.5, size = 20), 
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(size = 15),
+        axis.text.y = element_text(size = 12))
+
+meanVCus <- data.frame(Mean = c(mean(filter(Student2, Hall == "Shoemaker")$VCus),
+                                 mean(filter(Student2, Hall == "Mitchell")$VCus),
+                                 mean(filter(Student2, Hall == "Sherburne")$VCus),
+                                 mean(filter(Student2, Hall == "Stearns")$VCus),
+                                 mean(filter(Student2, Hall == "Case-Hill")$VCus),
+                                 mean(filter(Student2, Hall == "Stateview")$VCus)),
+                       Hall = c("Shoemaker", "Mitchell", "Sherburne", "Stearns", "Case-Hill", "Stateview")) %>% 
+  arrange(Mean)
+meanVCus
+kruskal_test(score ~ group, data = VCus, distribution = approximate())
+```
+
+
+## Gender
+
+```{r}
+table(Student2$Gender)
+
+#Since there is only one unknown, let's only focus on Male and Female
+#Remove Unknown
+Student3 <- filter(Student2, Gender != "Unknown")
+```
+
+
+### Fluency
+
+```{r}
+#Scheduling
+SCkn <- data.frame(score = Student3$SCkn,
+                   gender = as.factor(Student3$Gender))
+ggplot(SCkn, aes(x = gender, y = score, color = gender)) +
+  geom_point(position = "jitter", show.legend = FALSE) +
+  geom_hline(yintercept = mean(filter(Student2, Gender == "Female")$SCkn), color = "#F8766D") +
+  geom_hline(yintercept = mean(filter(Student2, Gender == "Male")$SCkn), color = "#00BFC4") +
+  labs(title = "Scheduling Technology Fluency") +
+  theme(plot.title = element_text(hjust = 0.5, size = 20), 
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(size = 15),
+        axis.text.y = element_text(size = 12))
+
+t.test(score ~ gender, data = SCkn)
+mean(filter(Student2, Gender == "Female")$SCkn) - mean(filter(Student2, Gender == "Male")$SCkn)
+
+#Communication
+CMkn <- data.frame(score = Student3$CMkn,
+                   gender = as.factor(Student3$Gender))
+ggplot(CMkn, aes(x = gender, y = score, color = gender)) +
+  geom_point(position = "jitter", show.legend = FALSE) +
+  geom_hline(yintercept = mean(filter(Student2, Gender == "Female")$CMkn), color = "#F8766D") +
+  geom_hline(yintercept = mean(filter(Student2, Gender == "Male")$CMkn), color = "#00BFC4") +
+  labs(title = "Communication Technology Fluency") +
+  theme(plot.title = element_text(hjust = 0.5, size = 20), 
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(size = 15),
+        axis.text.y = element_text(size = 12))
+
+t.test(score ~ gender, data = CMkn)
+mean(filter(Student2, Gender == "Female")$CMkn) - mean(filter(Student2, Gender == "Male")$CMkn)
+
+#Meeting
+VCkn <- data.frame(score = Student3$VCkn,
+                   gender = as.factor(Student3$Gender))
+ggplot(VCkn, aes(x = gender, y = score, color = gender)) +
+  geom_point(position = "jitter", show.legend = FALSE) +
+  geom_hline(yintercept = mean(filter(Student2, Gender == "Female")$VCkn), color = "#F8766D") +
+  geom_hline(yintercept = mean(filter(Student2, Gender == "Male")$VCkn), color = "#00BFC4") +
+  labs(title = "Meeting Technology Fluency") +
+  theme(plot.title = element_text(hjust = 0.5, size = 20), 
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(size = 15),
+        axis.text.y = element_text(size = 12))
+
+t.test(score ~ gender, data = VCkn)
+mean(filter(Student2, Gender == "Female")$VCkn) - mean(filter(Student2, Gender == "Male")$VCkn)
+```
+
+
+### Usage
+
+```{r}
+#Scheduling
+SCus <- data.frame(score = Student3$SCus,
+                   gender = as.factor(Student3$Gender))
+ggplot(SCus, aes(x = gender, y = score, color = gender)) +
+  geom_point(position = "jitter", show.legend = FALSE) +
+  geom_hline(yintercept = mean(filter(Student2, Gender == "Female")$SCus), color = "#F8766D") +
+  geom_hline(yintercept = mean(filter(Student2, Gender == "Male")$SCus), color = "#00BFC4") +
+  labs(title = "Scheduling Technology Usage") +
+  theme(plot.title = element_text(hjust = 0.5, size = 20), 
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(size = 15),
+        axis.text.y = element_text(size = 12))
+
+t.test(score ~ gender, data = SCus)
+mean(filter(Student2, Gender == "Female")$SCus) - mean(filter(Student2, Gender == "Male")$SCus)
+
+#Communication
+CMus <- data.frame(score = Student3$CMus,
+                   gender = as.factor(Student3$Gender))
+ggplot(CMus, aes(x = gender, y = score, color = gender)) +
+  geom_point(position = "jitter", show.legend = FALSE) +
+  geom_hline(yintercept = mean(filter(Student2, Gender == "Female")$CMus), color = "#F8766D") +
+  geom_hline(yintercept = mean(filter(Student2, Gender == "Male")$CMus), color = "#00BFC4") +
+  labs(title = "Communication Technology Usage") +
+  theme(plot.title = element_text(hjust = 0.5, size = 20), 
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(size = 15),
+        axis.text.y = element_text(size = 12))
+
+t.test(score ~ gender, data = CMus)
+mean(filter(Student2, Gender == "Female")$CMus) - mean(filter(Student2, Gender == "Male")$CMus)
+
+#Meeting
+VCus <- data.frame(score = Student3$VCus,
+                   gender = as.factor(Student3$Gender))
+ggplot(VCus, aes(x = gender, y = score, color = gender)) +
+  geom_point(position = "jitter", show.legend = FALSE) +
+  geom_hline(yintercept = mean(filter(Student2, Gender == "Female")$VCus), color = "#F8766D") +
+  geom_hline(yintercept = mean(filter(Student2, Gender == "Male")$VCus), color = "#00BFC4") +
+  labs(title = "Meeting Technology Usage") +
+  theme(plot.title = element_text(hjust = 0.5, size = 20), 
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(size = 15),
+        axis.text.y = element_text(size = 12))
+
+t.test(score ~ gender, data = VCus)
+mean(filter(Student2, Gender == "Female")$VCus) - mean(filter(Student2, Gender == "Male")$VCus)
+```
+
+
+
+## Age
+
+### Fluency 
+
+```{r}
+mean(Student2$Age)
+
+#Scheduling
+cor.test(Student2$SCkn, Student2$Age)
+ggplot(Student2, aes(x = Age, y = SCkn, color = Age)) +
+  geom_point(position = "jitter", show.legend = FALSE) +
+  labs(title = "Scheduling Technology Fluency") +
+  theme(plot.title = element_text(hjust = 0.5, size = 20),
+        axis.text.x = element_text(size = 15),
+        axis.text.y = element_text(size = 12))
+
+
+#Communication
+cor.test(Student2$CMkn, Student2$Age)
+ggplot(Student2, aes(x = Age, y = CMkn, color = Age)) +
+  geom_point(position = "jitter", show.legend = FALSE) +
+  labs(title = "Communication Technology Fluency") +
+  theme(plot.title = element_text(hjust = 0.5, size = 20),
+        axis.text.x = element_text(size = 15),
+        axis.text.y = element_text(size = 12))
+
+#Meeting
+cor.test(Student2$VCkn, Student2$Age)
+ggplot(Student2, aes(x = Age, y = VCkn, color = Age)) +
+  geom_point(position = "jitter", show.legend = FALSE) +
+  labs(title = "Meeting Technology Fluency") +
+  theme(plot.title = element_text(hjust = 0.5, size = 20),
+        axis.text.x = element_text(size = 15),
+        axis.text.y = element_text(size = 12))
+```
+
+
+### Usage
+
+```{r}
+#Scheduling
+cor.test(Student2$SCus, Student2$Age)
+ggplot(Student2, aes(x = Age, y = SCus, color = Age)) +
+  geom_point(position = "jitter", show.legend = FALSE) +
+  labs(title = "Scheduling Technology Usage") +
+  theme(plot.title = element_text(hjust = 0.5, size = 20),
+        axis.text.x = element_text(size = 15),
+        axis.text.y = element_text(size = 12))
+
+#Communication
+cor.test(Student2$CMus, Student2$Age)
+ggplot(Student2, aes(x = Age, y = CMus, color = Age)) +
+  geom_point(position = "jitter", show.legend = FALSE) +
+  labs(title = "Communication Technology Usage") +
+  theme(plot.title = element_text(hjust = 0.5, size = 20),
+        axis.text.x = element_text(size = 15),
+        axis.text.y = element_text(size = 12))
+
+#Meeting
+cor.test(Student2$VCus, Student2$Age)
+ggplot(Student2, aes(x = Age, y = VCus, color = Age)) +
+  geom_point(position = "jitter", show.legend = FALSE) +
+  labs(title = "Meeting Technology Usage") +
+  theme(plot.title = element_text(hjust = 0.5, size = 20),
+        axis.text.x = element_text(size = 15),
+        axis.text.y = element_text(size = 12))
+```
+
+
+## Class (Year in College)
+
+```{r}
+table(Student2$Class)
+```
+
+
+### Fluency
+
+```{r}
+#Scheduling
+SCkn <- data.frame(score = Student2$SCkn,
+                   group = Student2$Class)
+ggplot(SCkn, aes(x = group, y = score, color = group)) +
+  geom_point(position = "jitter", show.legend = FALSE) +
+  geom_hline(yintercept = mean(filter(Student2, Class == "FR")$SCkn), color = "#F8766D") +
+  geom_hline(yintercept = mean(filter(Student2, Class == "SO")$SCkn), color = "#00BFC4") +
+  geom_hline(yintercept = mean(filter(Student2, Class == "JR")$SCkn), color = "#7CAE00") +
+  geom_hline(yintercept = mean(filter(Student2, Class == "SR")$SCkn), color = "#C77CFF") +
+  labs(title = "Scheduling Technology Fluency") +
+  theme(plot.title = element_text(hjust = 0.5, size = 20), 
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(size = 15),
+        axis.text.y = element_text(size = 12))
+
+meanSCkn <- data.frame(Mean = c(mean(filter(Student2, Class == "FR")$SCkn),
+                                mean(filter(Student2, Class == "SO")$SCkn),
+                                mean(filter(Student2, Class == "FR")$SCkn),
+                                mean(filter(Student2, Class == "SR")$SCkn)),
+                       Class = c("FR", "SO", "JR", "SR")) %>%
+  arrange(Mean)
+meanSCkn
+kruskal_test(score ~ group, data = SCkn, distribution = approximate())
+
+#Communication
+CMkn <- data.frame(score = Student2$CMkn,
+                   group = Student2$Class)
+ggplot(CMkn, aes(x = group, y = score, color = group)) +
+  geom_point(position = "jitter", show.legend = FALSE) +
+  geom_hline(yintercept = mean(filter(Student2, Class == "FR")$CMkn), color = "#F8766D") +
+  geom_hline(yintercept = mean(filter(Student2, Class == "SO")$CMkn), color = "#00BFC4") +
+  geom_hline(yintercept = mean(filter(Student2, Class == "JR")$CMkn), color = "#7CAE00") +
+  geom_hline(yintercept = mean(filter(Student2, Class == "SR")$CMkn), color = "#C77CFF") +
+  labs(title = "Communication Technology Fluency") +
+  theme(plot.title = element_text(hjust = 0.5, size = 20), 
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(size = 15),
+        axis.text.y = element_text(size = 12))
+
+meanCMkn <- data.frame(Mean = c(mean(filter(Student2, Class == "FR")$CMkn),
+                                mean(filter(Student2, Class == "SO")$CMkn),
+                                mean(filter(Student2, Class == "FR")$CMkn),
+                                mean(filter(Student2, Class == "SR")$CMkn)),
+                       Class = c("FR", "SO", "JR", "SR")) %>%
+  arrange(Mean)
+meanCMkn
+kruskal_test(score ~ group, data = CMkn, distribution = approximate())
+
+#Meeting
+VCkn <- data.frame(score = Student2$VCkn,
+                   group = Student2$Class)
+ggplot(VCkn, aes(x = group, y = score, color = group)) +
+  geom_point(position = "jitter", show.legend = FALSE) +
+  geom_hline(yintercept = mean(filter(Student2, Class == "FR")$VCkn), color = "#F8766D") +
+  geom_hline(yintercept = mean(filter(Student2, Class == "SO")$VCkn), color = "#00BFC4") +
+  geom_hline(yintercept = mean(filter(Student2, Class == "JR")$VCkn), color = "#7CAE00") +
+  geom_hline(yintercept = mean(filter(Student2, Class == "SR")$VCkn), color = "#C77CFF") +
+  labs(title = "Meeting Technology Fluency") +
+  theme(plot.title = element_text(hjust = 0.5, size = 20), 
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(size = 15),
+        axis.text.y = element_text(size = 12))
+
+meanVCkn <- data.frame(Mean = c(mean(filter(Student2, Class == "FR")$VCkn),
+                                mean(filter(Student2, Class == "SO")$VCkn),
+                                mean(filter(Student2, Class == "FR")$VCkn),
+                                mean(filter(Student2, Class == "SR")$VCkn)),
+                       Class = c("FR", "SO", "JR", "SR")) %>%
+  arrange(Mean)
+meanVCkn
+kruskal_test(score ~ group, data = VCkn, distribution = approximate())
+```
+
+### Usage
+
+```{r}
+#Scheduling
+SCus <- data.frame(score = Student2$SCus,
+                   group = Student2$Class)
+ggplot(SCus, aes(x = group, y = score, color = group)) +
+  geom_point(position = "jitter", show.legend = FALSE) +
+  geom_hline(yintercept = mean(filter(Student2, Class == "FR")$SCus), color = "#F8766D") +
+  geom_hline(yintercept = mean(filter(Student2, Class == "SO")$SCus), color = "#00BFC4") +
+  geom_hline(yintercept = mean(filter(Student2, Class == "JR")$SCus), color = "#7CAE00") +
+  geom_hline(yintercept = mean(filter(Student2, Class == "SR")$SCus), color = "#C77CFF") +
+  labs(title = "Scheduling Technology Usage") +
+  theme(plot.title = element_text(hjust = 0.5, size = 20), 
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(size = 15),
+        axis.text.y = element_text(size = 12))
+
+meanSCus <- data.frame(Mean = c(mean(filter(Student2, Class == "FR")$SCus),
+                                mean(filter(Student2, Class == "SO")$SCus),
+                                mean(filter(Student2, Class == "FR")$SCus),
+                                mean(filter(Student2, Class == "SR")$SCus)),
+                       Class = c("FR", "SO", "JR", "SR")) %>%
+  arrange(Mean)
+meanSCus
+kruskal_test(score ~ group, data = SCus, distribution = approximate())
+
+#Communication
+CMus <- data.frame(score = Student2$CMus,
+                   group = Student2$Class)
+ggplot(CMus, aes(x = group, y = score, color = group)) +
+  geom_point(position = "jitter", show.legend = FALSE) +
+  geom_hline(yintercept = mean(filter(Student2, Class == "FR")$CMus), color = "#F8766D") +
+  geom_hline(yintercept = mean(filter(Student2, Class == "SO")$CMus), color = "#00BFC4") +
+  geom_hline(yintercept = mean(filter(Student2, Class == "JR")$CMus), color = "#7CAE00") +
+  geom_hline(yintercept = mean(filter(Student2, Class == "SR")$CMus), color = "#C77CFF") +
+  labs(title = "Communication Technology Usage") +
+  theme(plot.title = element_text(hjust = 0.5, size = 20), 
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(size = 15),
+        axis.text.y = element_text(size = 12))
+
+meanCMus <- data.frame(Mean = c(mean(filter(Student2, Class == "FR")$CMus),
+                                mean(filter(Student2, Class == "SO")$CMus),
+                                mean(filter(Student2, Class == "FR")$CMus),
+                                mean(filter(Student2, Class == "SR")$CMus)),
+                       Class = c("FR", "SO", "JR", "SR")) %>%
+  arrange(Mean)
+meanCMus
+kruskal_test(score ~ group, data = CMus, distribution = approximate())
+
+#Meeting
+VCus <- data.frame(score = Student2$VCus,
+                   group = Student2$Class)
+ggplot(VCus, aes(x = group, y = score, color = group)) +
+  geom_point(position = "jitter", show.legend = FALSE) +
+  geom_hline(yintercept = mean(filter(Student2, Class == "FR")$VCus), color = "#F8766D") +
+  geom_hline(yintercept = mean(filter(Student2, Class == "SO")$VCus), color = "#00BFC4") +
+  geom_hline(yintercept = mean(filter(Student2, Class == "JR")$VCus), color = "#7CAE00") +
+  geom_hline(yintercept = mean(filter(Student2, Class == "SR")$VCus), color = "#C77CFF") +
+  labs(title = "Meeting Technology Usage") +
+  theme(plot.title = element_text(hjust = 0.5, size = 20), 
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(size = 15),
+        axis.text.y = element_text(size = 12))
+
+meanVCus <- data.frame(Mean = c(mean(filter(Student2, Class == "FR")$VCus),
+                                mean(filter(Student2, Class == "SO")$VCus),
+                                mean(filter(Student2, Class == "FR")$VCus),
+                                mean(filter(Student2, Class == "SR")$VCus)),
+                       Class = c("FR", "SO", "JR", "SR")) %>%
+  arrange(Mean)
+meanVCus
+kruskal_test(score ~ group, data = VCus, distribution = approximate())
+```
+
+
+## College/School
+
+```{r}
+table(Student2$`College/School`)
+
+#Since there are only three unknown and one University College, let's remove them for simplicity.
+Student3 <- filter(Student2, !(`College/School` %in% c("University College", "Unknown")))
+
+#Recode school names into abbr.
+for (i in 1:length(Student3$`College/School`)) {
+  if (Student3$`College/School`[i] == "College of Liberal Arts") {Student3$`College/School`[i] <- "CLA"}
+  else if (Student3$`College/School`[i] == "College of Science and Engineering") {Student3$`College/School`[i] <- "COSE"}
+  else if (Student3$`College/School`[i] == "Herberger Business School") {Student3$`College/School`[i] <- "HBS"}
+  else if (Student3$`College/School`[i] == "School of Education") {Student3$`College/School`[i] <- "SOE"}
+  else if (Student3$`College/School`[i] == "School of Health and Human Services") {Student3$`College/School`[i] <- "SHHS"}
+  else if (Student3$`College/School`[i] == "School of Public Affairs") {Student3$`College/School`[i] <- "SOPA"}
+}
+
+```
+
+### Fluency
+
+```{r}
+#Scheduling
+SCkn <- data.frame(score = Student3$SCkn,
+                   group = as.factor(Student3$`College/School`))
+ggplot(SCkn, aes(x = group, y = score, color = group)) +
+  geom_point(position = "jitter", show.legend = FALSE) +
+  geom_hline(yintercept = mean(filter(Student3, `College/School` == "CLA")$SCkn), color = "#F8766D") +
+  geom_hline(yintercept = mean(filter(Student3, `College/School` == "COSE")$SCkn), color = "#B79F00") +
+  geom_hline(yintercept = mean(filter(Student3, `College/School` == "HBS")$SCkn), color = "#00BA38") +
+  geom_hline(yintercept = mean(filter(Student3, `College/School` == "SOE")$SCkn), color = "#00BFC4") +
+  geom_hline(yintercept = mean(filter(Student3, `College/School` == "SHHS")$SCkn), color = "#619CFF") +
+  geom_hline(yintercept = mean(filter(Student3, `College/School` == "SOPA")$SCkn), color = "#F564E3") +
+  labs(title = "Scheduling Technology Fluency") +
+  theme(plot.title = element_text(hjust = 0.5, size = 20), 
+        axis.title.x = element_blank(), 
+        axis.text.x = element_text(size = 15),
+        axis.text.y = element_text(size = 12))
+
+
+meanSCkn <- data.frame(Mean = c(mean(filter(Student3, `College/School` == "CLA")$SCkn),
+                                mean(filter(Student3, `College/School` == "COSE")$SCkn),
+                                mean(filter(Student3, `College/School` == "HBS")$SCkn),
+                                mean(filter(Student3, `College/School` == "SOE")$SCkn),
+                                mean(filter(Student3, `College/School` == "SHHS")$SCkn),
+                                mean(filter(Student3, `College/School` == "SOPA")$SCkn)),
+                       School = c("CLA", "COSE", 
+                                  "HBS", "SOE", 
+                                  "SHHS", "SOPA")) %>%
+  arrange(Mean)
+meanSCkn
+kruskal_test(score ~ group, data = SCkn, distribution = approximate())
+
+
+#Communication
+CMkn <- data.frame(score = Student3$CMkn,
+                   group = as.factor(Student3$`College/School`))
+ggplot(CMkn, aes(x = group, y = score, color = group)) +
+  geom_point(position = "jitter", show.legend = FALSE) +
+  geom_hline(yintercept = mean(filter(Student3, `College/School` == "CLA")$CMkn), color = "#F8766D") +
+  geom_hline(yintercept = mean(filter(Student3, `College/School` == "COSE")$CMkn), color = "#B79F00") +
+  geom_hline(yintercept = mean(filter(Student3, `College/School` == "HBS")$CMkn), color = "#00BA38") +
+  geom_hline(yintercept = mean(filter(Student3, `College/School` == "SOE")$CMkn), color = "#00BFC4") +
+  geom_hline(yintercept = mean(filter(Student3, `College/School` == "SHHS")$CMkn), color = "#619CFF") +
+  geom_hline(yintercept = mean(filter(Student3, `College/School` == "SOPA")$CMkn), color = "#F564E3") +
+  labs(title = "Communication Technology Fluency") +
+  theme(plot.title = element_text(hjust = 0.5, size = 20), 
+        axis.title.x = element_blank(), 
+        axis.text.x = element_text(size = 15),
+        axis.text.y = element_text(size = 12))
+
+
+meanCMkn <- data.frame(Mean = c(mean(filter(Student3, `College/School` == "CLA")$CMkn),
+                                mean(filter(Student3, `College/School` == "COSE")$CMkn),
+                                mean(filter(Student3, `College/School` == "HBS")$CMkn),
+                                mean(filter(Student3, `College/School` == "SOE")$CMkn),
+                                mean(filter(Student3, `College/School` == "SHHS")$CMkn),
+                                mean(filter(Student3, `College/School` == "SOPA")$CMkn)),
+                       School = c("CLA", "COSE", 
+                                  "HBS", "SOE", 
+                                  "SHHS", "SOPA")) %>%
+  arrange(Mean)
+meanCMkn
+kruskal_test(score ~ group, data = CMkn, distribution = approximate())
+
+
+#Meeting
+VCkn <- data.frame(score = Student3$VCkn,
+                   group = as.factor(Student3$`College/School`))
+ggplot(VCkn, aes(x = group, y = score, color = group)) +
+  geom_point(position = "jitter", show.legend = FALSE) +
+  geom_hline(yintercept = mean(filter(Student3, `College/School` == "CLA")$VCkn), color = "#F8766D") +
+  geom_hline(yintercept = mean(filter(Student3, `College/School` == "COSE")$VCkn), color = "#B79F00") +
+  geom_hline(yintercept = mean(filter(Student3, `College/School` == "HBS")$VCkn), color = "#00BA38") +
+  geom_hline(yintercept = mean(filter(Student3, `College/School` == "SOE")$VCkn), color = "#00BFC4") +
+  geom_hline(yintercept = mean(filter(Student3, `College/School` == "SHHS")$VCkn), color = "#619CFF") +
+  geom_hline(yintercept = mean(filter(Student3, `College/School` == "SOPA")$VCkn), color = "#F564E3") +
+  labs(title = "Meeting Technology Fluency") +
+  theme(plot.title = element_text(hjust = 0.5, size = 20), 
+        axis.title.x = element_blank(), 
+        axis.text.x = element_text(size = 15),
+        axis.text.y = element_text(size = 12))
+
+
+meanVCkn <- data.frame(Mean = c(mean(filter(Student3, `College/School` == "CLA")$VCkn),
+                                mean(filter(Student3, `College/School` == "COSE")$VCkn),
+                                mean(filter(Student3, `College/School` == "HBS")$VCkn),
+                                mean(filter(Student3, `College/School` == "SOE")$VCkn),
+                                mean(filter(Student3, `College/School` == "SHHS")$VCkn),
+                                mean(filter(Student3, `College/School` == "SOPA")$VCkn)),
+                       School = c("CLA", "COSE", 
+                                  "HBS", "SOE", 
+                                  "SHHS", "SOPA")) %>%
+  arrange(Mean)
+meanVCkn
+kruskal_test(score ~ group, data = VCkn, distribution = approximate())
+```
+
+
+### Usage
+
+```{r}
+#Scheduling
+SCus <- data.frame(score = Student3$SCus,
+                   group = as.factor(Student3$`College/School`))
+ggplot(SCus, aes(x = group, y = score, color = group)) +
+  geom_point(position = "jitter", show.legend = FALSE) +
+  geom_hline(yintercept = mean(filter(Student3, `College/School` == "CLA")$SCus), color = "#F8766D") +
+  geom_hline(yintercept = mean(filter(Student3, `College/School` == "COSE")$SCus), color = "#B79F00") +
+  geom_hline(yintercept = mean(filter(Student3, `College/School` == "HBS")$SCus), color = "#00BA38") +
+  geom_hline(yintercept = mean(filter(Student3, `College/School` == "SOE")$SCus), color = "#00BFC4") +
+  geom_hline(yintercept = mean(filter(Student3, `College/School` == "SHHS")$SCus), color = "#619CFF") +
+  geom_hline(yintercept = mean(filter(Student3, `College/School` == "SOPA")$SCus), color = "#F564E3") +
+  labs(title = "Scheduling Technology Usage") +
+  theme(plot.title = element_text(hjust = 0.5, size = 20), 
+        axis.title.x = element_blank(), 
+        axis.text.x = element_text(size = 15),
+        axis.text.y = element_text(size = 12))
+
+
+meanSCus <- data.frame(Mean = c(mean(filter(Student3, `College/School` == "CLA")$SCus),
+                                mean(filter(Student3, `College/School` == "COSE")$SCus),
+                                mean(filter(Student3, `College/School` == "HBS")$SCus),
+                                mean(filter(Student3, `College/School` == "SOE")$SCus),
+                                mean(filter(Student3, `College/School` == "SHHS")$SCus),
+                                mean(filter(Student3, `College/School` == "SOPA")$SCus)),
+                       School = c("CLA", "COSE", 
+                                  "HBS", "SOE", 
+                                  "SHHS", "SOPA")) %>%
+  arrange(Mean)
+meanSCus
+kruskal_test(score ~ group, data = SCus, distribution = approximate())
+
+
+#Communication
+CMus <- data.frame(score = Student3$CMus,
+                   group = as.factor(Student3$`College/School`))
+ggplot(CMus, aes(x = group, y = score, color = group)) +
+  geom_point(position = "jitter", show.legend = FALSE) +
+  geom_hline(yintercept = mean(filter(Student3, `College/School` == "CLA")$CMus), color = "#F8766D") +
+  geom_hline(yintercept = mean(filter(Student3, `College/School` == "COSE")$CMus), color = "#B79F00") +
+  geom_hline(yintercept = mean(filter(Student3, `College/School` == "HBS")$CMus), color = "#00BA38") +
+  geom_hline(yintercept = mean(filter(Student3, `College/School` == "SOE")$CMus), color = "#00BFC4") +
+  geom_hline(yintercept = mean(filter(Student3, `College/School` == "SHHS")$CMus), color = "#619CFF") +
+  geom_hline(yintercept = mean(filter(Student3, `College/School` == "SOPA")$CMus), color = "#F564E3") +
+  labs(title = "Communication Technology Usage") +
+  theme(plot.title = element_text(hjust = 0.5, size = 20), 
+        axis.title.x = element_blank(), 
+        axis.text.x = element_text(size = 15),
+        axis.text.y = element_text(size = 12))
+
+
+meanCMus <- data.frame(Mean = c(mean(filter(Student3, `College/School` == "CLA")$CMus),
+                                mean(filter(Student3, `College/School` == "COSE")$CMus),
+                                mean(filter(Student3, `College/School` == "HBS")$CMus),
+                                mean(filter(Student3, `College/School` == "SOE")$CMus),
+                                mean(filter(Student3, `College/School` == "SHHS")$CMus),
+                                mean(filter(Student3, `College/School` == "SOPA")$CMus)),
+                       School = c("CLA", "COSE", 
+                                  "HBS", "SOE", 
+                                  "SHHS", "SOPA")) %>%
+  arrange(Mean)
+meanCMus
+kruskal_test(score ~ group, data = CMus, distribution = approximate())
+
+
+#Meeting
+VCus <- data.frame(score = Student3$VCus,
+                   group = as.factor(Student3$`College/School`))
+ggplot(VCus, aes(x = group, y = score, color = group)) +
+  geom_point(position = "jitter", show.legend = FALSE) +
+  geom_hline(yintercept = mean(filter(Student3, `College/School` == "CLA")$VCus), color = "#F8766D") +
+  geom_hline(yintercept = mean(filter(Student3, `College/School` == "COSE")$VCus), color = "#B79F00") +
+  geom_hline(yintercept = mean(filter(Student3, `College/School` == "HBS")$VCus), color = "#00BA38") +
+  geom_hline(yintercept = mean(filter(Student3, `College/School` == "SOE")$VCus), color = "#00BFC4") +
+  geom_hline(yintercept = mean(filter(Student3, `College/School` == "SHHS")$VCus), color = "#619CFF") +
+  geom_hline(yintercept = mean(filter(Student3, `College/School` == "SOPA")$VCus), color = "#F564E3") +
+  labs(title = "Meeting Technology Usage") +
+  theme(plot.title = element_text(hjust = 0.5, size = 20), 
+        axis.title.x = element_blank(), 
+        axis.text.x = element_text(size = 15),
+        axis.text.y = element_text(size = 12))
+
+
+meanVCus <- data.frame(Mean = c(mean(filter(Student3, `College/School` == "CLA")$VCus),
+                                mean(filter(Student3, `College/School` == "COSE")$VCus),
+                                mean(filter(Student3, `College/School` == "HBS")$VCus),
+                                mean(filter(Student3, `College/School` == "SOE")$VCus),
+                                mean(filter(Student3, `College/School` == "SHHS")$VCus),
+                                mean(filter(Student3, `College/School` == "SOPA")$VCus)),
+                       School = c("CLA", "COSE", 
+                                  "HBS", "SOE", 
+                                  "SHHS", "SOPA")) %>%
+  arrange(Mean)
+meanVCus
+kruskal_test(score ~ group, data = VCus, distribution = approximate())
+```
+
+## Overall Scores
+
+```{r}
+Student3 <- Student2 %>% 
+  mutate(Fluency = SCkn + CMkn + VCkn,
+         Usage = SCus + CMus + VCus)
+```
+
+
+### Simple OLS
+
+```{r}
+#Fluency
+full <- lm(Fluency ~ Gender + Age + `College/School` + Class + Location, data = Student3)
+summary(full)
+
+GenderAge <- lm(Fluency ~ Gender + Age, data = Student3)
+summary(GenderAge)
+
+SchoolClass <- lm(Fluency ~ `College/School` + Class, data = Student3)
+summary(SchoolClass)
+
+LocationClass <- lm(Fluency ~ Location + Class, data = Student3)
+summary(LocationClass)
+```
+
